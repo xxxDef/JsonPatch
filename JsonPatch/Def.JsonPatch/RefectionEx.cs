@@ -5,7 +5,7 @@ using System.Reflection;
 
 namespace Def.JsonPatch
 {
-    public static class ReflectionEx1
+    public static class ReflectionEx
     {
         static readonly ConcurrentDictionary<Type, PropertyInfo[]> propertyInfoCache = new ConcurrentDictionary<Type, PropertyInfo[]>();
         static readonly ConcurrentDictionary<Type, FieldInfo[]> fieldInfoCache = new ConcurrentDictionary<Type, FieldInfo[]>();
