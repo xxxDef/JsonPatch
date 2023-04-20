@@ -6,17 +6,17 @@ namespace Def.JsonPatch
     public class Differ
     {
         public Func<PropertyInfo, bool>? SkipStrategy { get; set; }
-        
+
         public Func<object, string?> GetUniqueIdStrategy { get; set; } = (obj) =>
         {
             throw new NotImplementedException($"GetUniqueIdStrategy not set");
         };
-        
+
         public Action<object, object> SetUniqueIdStrategy { get; set; } = (from, to) =>
         {
             throw new NotImplementedException($"SetUniqueIdStrategy not set");
         };
-        
+
         public Func<Type, object> CreateStrategy { get; set; } = (type) =>
         {
             var obj = Activator.CreateInstance(type);
@@ -45,7 +45,14 @@ namespace Def.JsonPatch
             return Equals(x, y);
         };
 
-       // public Action<
+        public Func<object, PropertyInfo, PropertyInfo> GetSamePropertyStrategy { get; set; } = (obj, prop) =>
+        {
+            var res = obj.GetType().GetProperty(prop.Name);
+            Guards.InternalErrorIfNull(res, $"property {prop.Name} not found in object of type {obj.GetType()}");
+            return res;
+        };
+
+        // public Action<
 
         // compare current and new results, apply new results to current and return changes
         public IEnumerable<Change> DiffAndPatch<TCurrent, TNew>(TCurrent? current, TNew changed)
@@ -101,17 +108,12 @@ namespace Def.JsonPatch
             }
         }
 
-        PropertyInfo GetSameProperty(object obj, PropertyInfo prop)
-        {
-            var res = obj.GetType().GetProperty(prop.Name);
-            Guards.InternalErrorIfNull(res, $"property {prop.Name} not found in object of type {obj.GetType()}");
-            return res;
-        }
+
 
         private void DiffAndPatchValue(object current, PropertyInfo prop, object changed, string childFieldName, ICollection<Change> result)
         {
             var newValue = prop.GetValue(changed);
-            var currentProp = GetSameProperty(current, prop);
+            var currentProp = GetSamePropertyStrategy(current, prop);
             var oldValue = currentProp.GetValue(current);
 
             if (!AreEqualsStrategy(oldValue, newValue))
@@ -128,11 +130,11 @@ namespace Def.JsonPatch
             }
         }
 
-        
+
 
         private void DiffAndPatchContainer(object current, PropertyInfo prop, object changed, string currentpatch, ICollection<Change> result)
         {
-            var currentProp = GetSameProperty(current, prop);
+            var currentProp = GetSamePropertyStrategy(current, prop);
             var currentChild = currentProp.GetValue(current);
             var changedChild = prop.GetValue(changed);
 
@@ -187,7 +189,7 @@ namespace Def.JsonPatch
         private void DiffAndPatchDictionary(
             object current, PropertyInfo prop, object changed, string currentpatch, ICollection<Change> changes)
         {
-            var propInCurrent = GetSameProperty(current, prop);
+            var propInCurrent = GetSamePropertyStrategy(current, prop);
 
             Guards.InternalErrorIfFalse(propInCurrent.IsAssociativeDictionary(),
                $"Field {propInCurrent.Name} should be dictionary");
@@ -296,7 +298,7 @@ namespace Def.JsonPatch
             string currentpatch,
             ICollection<Change> result)
         {
-            var propInCurrent = GetSameProperty(current, prop);
+            var propInCurrent = GetSamePropertyStrategy(current, prop);
             var rawCurrentColl = propInCurrent.GetValue(current);
             Guards.InternalErrorIfFalse(rawCurrentColl is IList,
                 $"Collection {propInCurrent.Name} should implement IList interface");
@@ -321,7 +323,8 @@ namespace Def.JsonPatch
                 var changedColl = rawChangedColl as IEnumerable;
                 DiffAndPatchCollection(currentColl, changedColl, currentpatch, result,
                     GetUniqueIdStrategy,
-                    (x) => {
+                    (x) =>
+                    {
                         var newObj = CreateStrategy(x.GetType());
                         SetUniqueIdStrategy(newObj, x);
                         return newObj;
