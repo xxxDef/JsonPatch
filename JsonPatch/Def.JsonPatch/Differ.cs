@@ -296,7 +296,6 @@ namespace Def.JsonPatch
             }
         }
 
-
         private IEnumerable<Change> DiffAndPatchCollection(
             IList oldCollection,
             IEnumerable? newCollection,
@@ -340,7 +339,7 @@ namespace Def.JsonPatch
                 Guards.InternalErrorIfNull(view, $"unexpected null item in collection {oldCollection.GetType()}");
 
                 var oldId = getUniquieId(view);
-                var old = oldNewPairs.FirstOrDefault(mv => mv.Newitem != null && getUniquieId(mv.Newitem) == oldId);
+                var old = oldNewPairs.FirstOrDefault(mv => mv.NewItem != null && getUniquieId(mv.NewItem) == oldId);
                 if (old != null)
                 {
                     Guards.InternalErrorIfFalse(old.CurrentItem == null, $"Id '{oldId} in old collection for type {view.GetType()} exist more than once.");
@@ -372,7 +371,7 @@ namespace Def.JsonPatch
                     Guards.InternalErrorIfFalse(oldCollection.Count >= pos,
                         $"on this step of DiffAndPatchCollection we expect old colection has more elements than current element in new collection");
 
-                    pair.CurrentItem = createFrom(pair.Newitem);
+                    pair.CurrentItem = createFrom(pair.NewItem);
                     oldCollection.Insert(pos, pair.CurrentItem);
 
                     var curpatch = $"{currentpatch}/{pos}";
@@ -381,7 +380,7 @@ namespace Def.JsonPatch
                     // this initialized view will be set into value
                     if (!pair.CurrentItem.GetType().IsSimpleTypeOrString())
                     {
-                        var sipped = DiffAndPatch(pair.CurrentItem, pair.Newitem, curpatch).ToArray();
+                        var sipped = DiffAndPatch(pair.CurrentItem, pair.NewItem, curpatch).ToArray();
                     }
 
                     yield return new Change
@@ -425,7 +424,7 @@ namespace Def.JsonPatch
             IEnumerable<Change> MoveAndUpdate(int pos)
             {
                 var pair = oldNewPairs[pos];
-                Guards.InternalErrorIfNull(pair.Newitem, $"All views should already created and bound with model");
+                Guards.InternalErrorIfNull(pair.NewItem, $"All views should already created and bound with model");
                 Guards.InternalErrorIfNull(pair.CurrentItem, "All views should already created and bound with model");
 
                 var oldPos = oldCollection.IndexOf(pair.CurrentItem);
@@ -447,7 +446,7 @@ namespace Def.JsonPatch
 
                 if (!pair.CurrentItem.GetType().IsSimpleTypeOrString())
                 {
-                    foreach (var c in DiffAndPatch(pair.CurrentItem, pair.Newitem, curpatch))
+                    foreach (var c in DiffAndPatch(pair.CurrentItem, pair.NewItem, curpatch))
                         yield return c;
                 }
             }

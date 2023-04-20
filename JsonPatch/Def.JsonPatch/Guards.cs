@@ -8,17 +8,6 @@ namespace Def.JsonPatch
     public static class Guards
     {
         [DebuggerHidden]
-        public static void AccessDeniedIfFalse([DoesNotReturnIf(false)] bool condition, string? error = null)
-        {
-            if (!condition)
-            {
-                var message = error ?? $"access denied";
-                throw new UnauthorizedAccessException(message);
-            }
-
-        }
-
-        [DebuggerHidden]
         public static void InternalErrorIfNullOrEmpty([NotNull] string? value, string? error = null,
             [CallerFilePath] string callerFilePath = "",
             [CallerLineNumber] long callerLineNumber = 0,
@@ -112,19 +101,6 @@ namespace Def.JsonPatch
                 throw new ArgumentException($"{fieldName} must be at least {minLength} in length.");
             if (text != null && text.Length > maxLength)
                 throw new ArgumentException($"{fieldName} can't be larger than {maxLength} in length.");
-        }
-
-        [DebuggerHidden]
-        public static void ArgumentRegex(string text, Regex pattern, bool allowNull, string fieldName)
-        {
-            if (allowNull && text == null)
-                return;
-            if (text == null)
-                throw new ArgumentException($"{fieldName} can't be null.");
-            if (pattern == null)
-                throw new ArgumentException($"{fieldName} can't match null pattern.");
-            if (!pattern.IsMatch(text))
-                throw new ArgumentException($"{fieldName} has an incorrect format.");
         }
 
         [DebuggerHidden]
