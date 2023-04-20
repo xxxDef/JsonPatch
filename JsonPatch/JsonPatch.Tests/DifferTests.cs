@@ -15,21 +15,21 @@ namespace JsonPatch.Tests
         [SetUp]
         public void Setup()
         {
-           differ = new Differ
+            differ = new Differ(new DifferStrategies
             {
-                SkipStrategy = (propertyInfo) => propertyInfo.Name == nameof(View.UniqueId),
-                GetUniqueIdStrategy = (x) =>
+                Skip = (propertyInfo) => propertyInfo.Name == nameof(View.UniqueId),
+                GetUniqueId = (x) =>
                 {
                     if (x is View v)
                         return v.UniqueId ?? throw new ArgumentException("UniqueId should be not null");
                     throw new ArgumentException($"Unknown object {x.GetType()}");
                 },
-                SetUniqueIdStrategy = (from, to) =>
+                SetUniqueId = (from, to) =>
                 {
                     var n = (View)from;
                     n.UniqueId = (from as View)?.UniqueId;
                 }
-            };        
+            });
         }
 
         [Test]
@@ -45,7 +45,7 @@ namespace JsonPatch.Tests
 
             Assert.AreEqual("Name2", v1.Name);
         }
-        
+
         [Test]
         public void ExpectedNull()
         {
@@ -55,7 +55,7 @@ namespace JsonPatch.Tests
                 Name = "Name",
             };
 
-            var ex = Assert.Throws<ArgumentException>(() => 
+            var ex = Assert.Throws<ArgumentException>(() =>
                 differ.DiffAndPatch(v1, new { Name = "Name2" }).ToArray());
 
             Assert.AreEqual("Property set method not found.", ex.Message);

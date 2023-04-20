@@ -5,54 +5,12 @@ namespace Def.JsonPatch
 {
     public class Differ
     {
-        public Func<PropertyInfo, bool>? SkipStrategy { get; set; }
+        private readonly DifferStrategies strategies;
 
-        public Func<object, string?> GetUniqueIdStrategy { get; set; } = (obj) =>
+        public Differ(DifferStrategies strategies)
         {
-            throw new NotImplementedException($"GetUniqueIdStrategy not set");
-        };
-
-        public Action<object, object> SetUniqueIdStrategy { get; set; } = (from, to) =>
-        {
-            throw new NotImplementedException($"SetUniqueIdStrategy not set");
-        };
-
-        public Func<Type, object> CreateStrategy { get; set; } = (type) =>
-        {
-            var obj = Activator.CreateInstance(type);
-            Guards.InternalErrorIfNull(obj);
-            return obj;
-        };
-
-        public Func<PropertyInfo, object, object?, bool> SetValueStrategy { get; set; } = (pi, obj, newValue) =>
-        {
-            pi.SetValue(obj, newValue);
-            return true;
-        };
-
-        public Func<object?, object?, bool> AreEqualsStrategy { get; set; } = (x, y) =>
-        {
-            if (x == null && y == null)
-                return true;
-            if (x == null || y == null)
-                return false;
-            if (x.GetType() != y.GetType())
-                return false;
-            if (x is string xs && y is string ys) // or y is string
-                return xs == ys;
-            if (x is IStructuralEquatable ex)
-                return ex.Equals(y, StructuralComparisons.StructuralEqualityComparer);
-            return Equals(x, y);
-        };
-
-        public Func<object, PropertyInfo, PropertyInfo> GetSamePropertyStrategy { get; set; } = (obj, prop) =>
-        {
-            var res = obj.GetType().GetProperty(prop.Name);
-            Guards.InternalErrorIfNull(res, $"property {prop.Name} not found in object of type {obj.GetType()}");
-            return res;
-        };
-
-        // public Action<
+            this.strategies = strategies;
+        }
 
         // compare current and new results, apply new results to current and return changes
         public IEnumerable<Change> DiffAndPatch<TCurrent, TNew>(TCurrent? current, TNew changed)
@@ -75,14 +33,12 @@ namespace Def.JsonPatch
             return DiffAndPatch(current, changed, "");
         }
 
-        #region DiffAndPatch
-
         private IEnumerable<Change> DiffAndPatch(object current, object changed, string parentPath)
         {
-            var props = changed.GetType().GetProperties();
+            var props = strategies.GetProperties(changed); 
             foreach (var prop in props)
             {
-                if (SkipStrategy != null && SkipStrategy(prop))
+                if (strategies.Skip != null && strategies.Skip(prop))
                     continue;
 
                 string curPath = $"{parentPath}/{prop.Name}";
@@ -110,19 +66,19 @@ namespace Def.JsonPatch
             }
         }
 
-        private IEnumerable<Change> DiffAndPatchValue(object current, PropertyInfo prop, object changed, string childFieldName)
+        private IEnumerable<Change> DiffAndPatchValue(object current, PropertyInfo prop, object changed, string curPath)
         {
-            var newValue = prop.GetValue(changed);
-            var currentProp = GetSamePropertyStrategy(current, prop);
-            var oldValue = currentProp.GetValue(current);
+            var newValue = strategies.GetValue(prop, changed);
+            var currentProp = strategies.GetSameProperty(current, prop);
+            var oldValue = strategies.GetValue(currentProp, current);
 
-            if (!AreEqualsStrategy(oldValue, newValue))
+            if (!strategies.AreEquals(oldValue, newValue))
             {
-                if (SetValueStrategy(currentProp, current, newValue))
+                if (strategies.SetValue(currentProp, current, newValue))
                 {
                     yield return new Change
                     {
-                        path = childFieldName,
+                        path = curPath,
                         op = Operations.replace,
                         value = newValue
                     };
@@ -130,18 +86,19 @@ namespace Def.JsonPatch
             }
         }
 
-
-
         private IEnumerable<Change> DiffAndPatchContainer(object current, PropertyInfo prop, object changed, string currentpatch)
         {
-            var currentProp = GetSamePropertyStrategy(current, prop);
-            var currentChild = currentProp.GetValue(current);
-            var changedChild = prop.GetValue(changed);
+            var currentProp = strategies.GetSameProperty(current, prop);
+            var currentChild = strategies.GetValue(currentProp, current);
+            var changedChild = strategies.GetValue(prop, changed);
+
+            if (currentChild == null && changedChild == null) // do nothing if both view and model are null
+                yield break;
 
             if (currentChild != null && changedChild == null)
             {
-                prop.SetValue(current, null);
-                // remove old view
+                strategies.SetValue(prop, current, null);
+                // remove old 
                 yield return new Change
                 {
                     op = Operations.remove,
@@ -150,11 +107,11 @@ namespace Def.JsonPatch
             }
             else if (currentChild == null && changedChild != null)
             {
-                //add new view
-                currentChild = Activator.CreateInstance(prop.PropertyType);
-                Guards.InternalErrorIfNull(currentChild, $"failed to create new item of type {prop.PropertyType}");
-                prop.SetValue(current, currentChild);
-                var skipped = DiffAndPatch(currentChild, changedChild, currentpatch).ToArray();
+                //add new 
+                var newCurrentChild = Activator.CreateInstance(prop.PropertyType);
+                Guards.InternalErrorIfNull(newCurrentChild, $"failed to create new item of type {prop.PropertyType}");
+                strategies.SetValue(prop, current, newCurrentChild);
+                var skipped = DiffAndPatch(newCurrentChild, changedChild, currentpatch).ToArray();
 
                 yield return new Change
                 {
@@ -167,35 +124,24 @@ namespace Def.JsonPatch
             {
                 foreach (var c in DiffAndPatch(currentChild, changedChild, currentpatch))
                     yield return c;
-
-            }
-            else
-            {
-                // do nothing if both view and model are null
             }
         }
 
-        class OldNewPair
+        record OldNewPair(object NewItem)
         {
-            public OldNewPair(object m)
-            {
-                Newitem = m;
-            }
-
-            internal object Newitem { get; set; }
             internal object? CurrentItem { get; set; }
         }
 
         private IEnumerable<Change> DiffAndPatchDictionary(
             object current, PropertyInfo prop, object changed, string currentpatch)
         {
-            var propInCurrent = GetSamePropertyStrategy(current, prop);
+            var propInCurrent = strategies.GetSameProperty(current, prop);
 
             Guards.InternalErrorIfFalse(propInCurrent.IsAssociativeDictionary(),
                $"Field {propInCurrent.Name} should be dictionary");
 
-            var currentDict = propInCurrent.GetValue(current) as IDictionary<string, object>;
-            var changedDict = propInCurrent.GetValue(changed) as IDictionary<string, object>;
+            var currentDict = strategies.GetValue(propInCurrent, current) as IDictionary<string, object>;
+            var changedDict = strategies.GetValue(propInCurrent, changed) as IDictionary<string, object>;
 
             Guards.InternalErrorIfNull(currentDict,
                $"Dictionary {propInCurrent.Name} should be initialized in current object");
@@ -288,7 +234,7 @@ namespace Def.JsonPatch
                     else
                     {
                         // both items exsist
-                        if (!AreEqualsStrategy(curItem, changedItem.Value))
+                        if (!strategies.AreEquals(curItem, changedItem.Value))
                         {
                             currentDict[changedItem.Key] = changedItem.Value;
                             yield return new Change
@@ -310,8 +256,8 @@ namespace Def.JsonPatch
             object changed,
             string currentpatch)
         {
-            var propInCurrent = GetSamePropertyStrategy(current, prop);
-            var rawCurrentColl = propInCurrent.GetValue(current);
+            var propInCurrent = strategies.GetSameProperty(current, prop);
+            var rawCurrentColl = strategies.GetValue(propInCurrent, current);
             Guards.InternalErrorIfFalse(rawCurrentColl is IList,
                 $"Collection {propInCurrent.Name} should implement IList interface");
 
@@ -319,7 +265,7 @@ namespace Def.JsonPatch
 
             var itemType = ReflectionEx.GetItemType(currentColl);
 
-            var rawChangedColl = prop.GetValue(changed);
+            var rawChangedColl = strategies.GetValue(prop, changed);
 
             if (itemType.IsString())
             {
@@ -337,11 +283,11 @@ namespace Def.JsonPatch
             {
                 var changedColl = rawChangedColl as IEnumerable;
                 foreach (var c in DiffAndPatchCollection(currentColl, changedColl, currentpatch,
-                    GetUniqueIdStrategy,
+                    strategies.GetUniqueId,
                     (x) =>
                     {
-                        var newObj = CreateStrategy(x.GetType());
-                        SetUniqueIdStrategy(newObj, x);
+                        var newObj = strategies.Create(x.GetType());
+                        strategies.SetUniqueId(newObj, x);
                         return newObj;
                     }))
                 {
@@ -471,7 +417,7 @@ namespace Def.JsonPatch
             else
             {
                 for (int p = oldNewPairs.Count; p > 0; p--)
-                    foreach (var c in MoveAndUpdate(p-1))
+                    foreach (var c in MoveAndUpdate(p - 1))
                         yield return c;
             }
             // move and update
@@ -491,7 +437,7 @@ namespace Def.JsonPatch
                     oldCollection.RemoveAt(oldPos);
                     oldCollection.Insert(pos, pair.CurrentItem);
 
-                    yield return  new Change
+                    yield return new Change
                     {
                         op = Operations.move,
                         path = curpatch,
@@ -506,7 +452,5 @@ namespace Def.JsonPatch
                 }
             }
         }
-
-        #endregion DiffAndPatch
     }
 }
