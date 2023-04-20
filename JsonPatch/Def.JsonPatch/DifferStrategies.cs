@@ -16,13 +16,22 @@ namespace Def.JsonPatch
             return obj.GetType().GetProperties();
         };
 
-        public Func<object, object, bool> AreSame { get; set; } = (x, y) =>
-        {
-            throw new NotImplementedException($"AreSame Strategy not set");
-        };
+        public Func<object, object, bool> AreSame { get; set; } = Equals;
 
         public Func<Type, object> Create { get; set; } = (type) =>
         {
+            var obj = Activator.CreateInstance(type);
+            Guards.InternalErrorIfNull(obj);
+            return obj;
+        };
+        
+        public Func<object, object> CreateFrom { get; set; } = (objFrom) =>
+        {
+            var type = objFrom.GetType();
+            if (type.IsSimpleTypeOrString())
+            {
+                return objFrom;
+            }
             var obj = Activator.CreateInstance(type);
             Guards.InternalErrorIfNull(obj);
             return obj;

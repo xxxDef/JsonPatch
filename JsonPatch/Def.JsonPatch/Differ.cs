@@ -341,7 +341,7 @@ namespace Def.JsonPatch
                     Guards.InternalErrorIfFalse(oldCollection.Count >= pos,
                         $"on this step of DiffAndPatchCollection we expect old colection has more elements than current element in new collection");
 
-                    pair.CurrentItem = strategies.Create(pair.NewItem.GetType());
+                    pair.CurrentItem = strategies.CreateFrom(pair.NewItem);
                     oldCollection.Insert(pos, pair.CurrentItem);
 
                     var curpatch = $"{currentpatch}/{pos}";

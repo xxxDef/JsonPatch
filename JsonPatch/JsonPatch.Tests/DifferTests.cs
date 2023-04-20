@@ -24,11 +24,6 @@ namespace JsonPatch.Tests
                         return xv.UniqueId == yv.UniqueId;
                     return false;
                 },
-                SetUniqueId = (from, to) =>
-                {
-                    var n = (View)from;
-                    n.UniqueId = (from as View)?.UniqueId;
-                }
             });
         }
 
@@ -44,7 +39,9 @@ namespace JsonPatch.Tests
             var changes = differ.DiffAndPatch(v1, new { Name = "Name2" }).ToArray();
 
             Assert.AreEqual("Name2", v1.Name);
-        }
+        } 
+        
+       
 
         [Test]
         public void ExpectedNull()
