@@ -16,14 +16,9 @@ namespace Def.JsonPatch
             return obj.GetType().GetProperties();
         };
 
-        public Func<object, string?> GetUniqueId { get; set; } = (obj) =>
+        public Func<object, object, bool> AreSame { get; set; } = (x, y) =>
         {
-            throw new NotImplementedException($"GetUniqueIdStrategy not set");
-        };
-
-        public Action<object, object> SetUniqueId { get; set; } = (from, to) =>
-        {
-            throw new NotImplementedException($"SetUniqueIdStrategy not set");
+            throw new NotImplementedException($"AreSame Strategy not set");
         };
 
         public Func<Type, object> Create { get; set; } = (type) =>

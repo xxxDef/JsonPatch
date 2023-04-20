@@ -35,7 +35,7 @@ namespace Def.JsonPatch
 
         private IEnumerable<Change> DiffAndPatch(object current, object changed, string parentPath)
         {
-            var props = strategies.GetProperties(changed); 
+            var props = strategies.GetProperties(changed);
             foreach (var prop in props)
             {
                 if (strategies.Skip != null && strategies.Skip(prop))
@@ -257,51 +257,22 @@ namespace Def.JsonPatch
             string currentpatch)
         {
             var propInCurrent = strategies.GetSameProperty(current, prop);
-            var rawCurrentColl = strategies.GetValue(propInCurrent, current);
-            Guards.InternalErrorIfFalse(rawCurrentColl is IList,
+            var rawCurrentColl = strategies.GetValue(propInCurrent, current);         
+            var currentColl = rawCurrentColl as IList;
+            Guards.InternalErrorIfNull(currentColl,
                 $"Collection {propInCurrent.Name} should implement IList interface");
-
-            var currentColl = (IList)rawCurrentColl;
-
-            var itemType = ReflectionEx.GetItemType(currentColl);
 
             var rawChangedColl = strategies.GetValue(prop, changed);
 
-            if (itemType.IsString())
-            {
-                var changedColl = rawChangedColl as IEnumerable;
+            var changedColl = rawChangedColl as IEnumerable;
 
-                foreach (var c in DiffAndPatchCollection(currentColl, changedColl, currentpatch,
-                    x => x?.ToString(),
-                    x => x))
-                {
-                    yield return c;
-                }
-
-            }
-            else
-            {
-                var changedColl = rawChangedColl as IEnumerable;
-                foreach (var c in DiffAndPatchCollection(currentColl, changedColl, currentpatch,
-                    strategies.GetUniqueId,
-                    (x) =>
-                    {
-                        var newObj = strategies.Create(x.GetType());
-                        strategies.SetUniqueId(newObj, x);
-                        return newObj;
-                    }))
-                {
-                    yield return c;
-                }
-            }
+            return DiffAndPatchCollection(currentColl, changedColl, currentpatch);
         }
 
         private IEnumerable<Change> DiffAndPatchCollection(
             IList oldCollection,
             IEnumerable? newCollection,
-            string currentpatch,
-            Func<object, string?> getUniquieId,
-            Func<object, object> createFrom)
+            string currentpatch)
         {
             if (newCollection == null)
             {
@@ -338,11 +309,10 @@ namespace Def.JsonPatch
                 var view = oldCollection[i];
                 Guards.InternalErrorIfNull(view, $"unexpected null item in collection {oldCollection.GetType()}");
 
-                var oldId = getUniquieId(view);
-                var old = oldNewPairs.FirstOrDefault(mv => mv.NewItem != null && getUniquieId(mv.NewItem) == oldId);
+                var old = oldNewPairs.FirstOrDefault(mv => mv.NewItem != null && strategies.AreSame(mv.NewItem, view));
                 if (old != null)
                 {
-                    Guards.InternalErrorIfFalse(old.CurrentItem == null, $"Id '{oldId} in old collection for type {view.GetType()} exist more than once.");
+                    Guards.InternalErrorIfFalse(old.CurrentItem == null, $"Object in old collection for type {view.GetType()} exist more than once.");
                     old.CurrentItem = view;
                     ++i;
                 }
@@ -371,7 +341,7 @@ namespace Def.JsonPatch
                     Guards.InternalErrorIfFalse(oldCollection.Count >= pos,
                         $"on this step of DiffAndPatchCollection we expect old colection has more elements than current element in new collection");
 
-                    pair.CurrentItem = createFrom(pair.NewItem);
+                    pair.CurrentItem = strategies.Create(pair.NewItem.GetType());
                     oldCollection.Insert(pos, pair.CurrentItem);
 
                     var curpatch = $"{currentpatch}/{pos}";

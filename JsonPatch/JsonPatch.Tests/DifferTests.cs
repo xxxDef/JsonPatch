@@ -18,11 +18,11 @@ namespace JsonPatch.Tests
             differ = new Differ(new DifferStrategies
             {
                 Skip = (propertyInfo) => propertyInfo.Name == nameof(View.UniqueId),
-                GetUniqueId = (x) =>
+                AreSame = (x, y) =>
                 {
-                    if (x is View v)
-                        return v.UniqueId ?? throw new ArgumentException("UniqueId should be not null");
-                    throw new ArgumentException($"Unknown object {x.GetType()}");
+                    if (x is View xv && y is View yv)
+                        return xv.UniqueId == yv.UniqueId;
+                    return false;
                 },
                 SetUniqueId = (from, to) =>
                 {
