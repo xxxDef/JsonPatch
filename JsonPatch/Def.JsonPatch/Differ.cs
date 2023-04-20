@@ -33,181 +33,162 @@ namespace Def.JsonPatch
             return DiffAndPatch(current, changed, "");
         }
 
-        private IEnumerable<Change> DiffAndPatch(object current, object changed, string parentPath)
+        record ValueBinding(object Container, PropertyInfo Property, object? Value);
+
+        ValueBinding GetBinding(object container, PropertyInfo property)
+        {
+            if (property.DeclaringType == container.GetType())
+            {
+                var value = strategies.GetValue(property, container);
+                return new ValueBinding(container, property, value);
+            }
+            else
+            {
+                var sameProperty = strategies.GetSameProperty(container, property);
+                var value = strategies.GetValue(sameProperty, container);
+                return new ValueBinding(container, sameProperty, value);
+            }
+        }
+
+        private IEnumerable<Change> DiffAndPatch(object original, object changed, string parentPath)
         {
             var props = strategies.GetProperties(changed);
+
             foreach (var prop in props)
             {
                 if (strategies.Skip != null && strategies.Skip(prop))
                     continue;
 
+                var changedBinding = GetBinding(changed, prop);
+                var originalBinding = GetBinding(original, prop);
                 string curPath = $"{parentPath}/{prop.Name}";
 
                 if (prop.IsSimpleTypeOrString())
                 {
-                    foreach (var c in DiffAndPatchValue(current, prop, changed, curPath))
+                    foreach (var c in DiffAndPatchValue(originalBinding, changedBinding, curPath))
                         yield return c;
                 }
                 else if (prop.IsAssociativeDictionary())
                 {
-                    foreach (var c in DiffAndPatchDictionary(current, prop, changed, curPath))
+                    foreach (var c in DiffAndPatchDictionary(originalBinding, changedBinding, curPath))
                         yield return c;
                 }
                 else if (prop.IsEnumerable())
                 {
-                    foreach (var c in DiffAndPatchCollection(current, prop, changed, curPath))
+                    foreach (var c in DiffAndPatchCollection(originalBinding, changedBinding, curPath))
                         yield return c;
                 }
                 else
                 {
-                    foreach (var c in DiffAndPatchContainer(current, prop, changed, curPath))
+                    foreach (var c in DiffAndPatchContainer(originalBinding, changedBinding, curPath))
                         yield return c;
                 }
             }
         }
 
-        private IEnumerable<Change> DiffAndPatchValue(object current, PropertyInfo prop, object changed, string curPath)
+        private IEnumerable<Change> DiffAndPatchValue(ValueBinding original, ValueBinding changed, string path)
         {
-            var newValue = strategies.GetValue(prop, changed);
-            var currentProp = strategies.GetSameProperty(current, prop);
-            var oldValue = strategies.GetValue(currentProp, current);
-
-            if (!strategies.AreEquals(oldValue, newValue))
-            {
-                if (strategies.SetValue(currentProp, current, newValue))
-                {
-                    yield return new Change
-                    {
-                        path = curPath,
-                        op = Operations.replace,
-                        value = newValue
-                    };
-                }
-            }
-        }
-
-        private IEnumerable<Change> DiffAndPatchContainer(object current, PropertyInfo prop, object changed, string currentpatch)
-        {
-            var currentProp = strategies.GetSameProperty(current, prop);
-            var currentChild = strategies.GetValue(currentProp, current);
-            var changedChild = strategies.GetValue(prop, changed);
-
-            if (currentChild == null && changedChild == null) // do nothing if both view and model are null
+            if (strategies.AreEquals(original.Value, changed.Value))
                 yield break;
 
-            if (currentChild != null && changedChild == null)
+            if (strategies.SetValue(original.Property, original.Container, changed.Value))
+                yield break;
+
+            yield return new Change
             {
-                strategies.SetValue(prop, current, null);
+                path = path,
+                op = Operations.replace,
+                value = changed.Value
+            };
+        }
+
+        private IEnumerable<Change> DiffAndPatchContainer(ValueBinding original, ValueBinding changed, string currentpatch)
+        {
+            if (original.Value == null && changed.Value == null) // do nothing if both view and model are null
+                yield break;
+
+            if (original.Value != null && changed.Value == null)
+            {
                 // remove old 
-                yield return new Change
-                {
-                    op = Operations.remove,
-                    path = currentpatch
-                };
+                strategies.SetValue(original.Property, original.Container, null);
+                yield return Change.Remove(currentpatch);
             }
-            else if (currentChild == null && changedChild != null)
+            else if (original.Value == null && changed.Value != null)
             {
                 //add new 
-                var newCurrentChild = Activator.CreateInstance(prop.PropertyType);
-                Guards.InternalErrorIfNull(newCurrentChild, $"failed to create new item of type {prop.PropertyType}");
-                strategies.SetValue(prop, current, newCurrentChild);
-                var skipped = DiffAndPatch(newCurrentChild, changedChild, currentpatch).ToArray();
+                var newCurrentChild = strategies.Create(original.Property.PropertyType);
+                Guards.InternalErrorIfNull(newCurrentChild, $"failed to create new item of type {original.Property.PropertyType}");
+                strategies.SetValue(original.Property, original.Container, newCurrentChild);
+                var skipped = DiffAndPatch(newCurrentChild, changed.Value, currentpatch).ToArray();
 
-                yield return new Change
-                {
-                    op = Operations.add,
-                    path = currentpatch,
-                    value = currentChild
-                };
+                yield return Change.Add(currentpatch, original.Value);
             }
-            else if (currentChild != null && changedChild != null)
+            else if (original.Value != null && changed.Value != null)
             {
-                foreach (var c in DiffAndPatch(currentChild, changedChild, currentpatch))
+                // update/replace
+                foreach (var c in DiffAndPatch(original.Value, changed.Value, currentpatch))
                     yield return c;
             }
         }
 
-        record OldNewPair(object NewItem)
-        {
-            internal object? CurrentItem { get; set; }
-        }
+
 
         private IEnumerable<Change> DiffAndPatchDictionary(
-            object current, PropertyInfo prop, object changed, string currentpatch)
+            ValueBinding original, ValueBinding changed, string currentPatch)
         {
-            var propInCurrent = strategies.GetSameProperty(current, prop);
+            Guards.InternalErrorIfFalse(original.Property.IsAssociativeDictionary(),
+               $"Field {original.Property.Name} should be dictionary");
 
-            Guards.InternalErrorIfFalse(propInCurrent.IsAssociativeDictionary(),
-               $"Field {propInCurrent.Name} should be dictionary");
+            var originalDict = original.Value as IDictionary<string, object>;
+            var changedDict = changed.Value as IDictionary<string, object>;
 
-            var currentDict = strategies.GetValue(propInCurrent, current) as IDictionary<string, object>;
-            var changedDict = strategies.GetValue(propInCurrent, changed) as IDictionary<string, object>;
+            Guards.InternalErrorIfNull(originalDict,
+               $"Dictionary {original.Property.Name} should be initialized in current object");
 
-            Guards.InternalErrorIfNull(currentDict,
-               $"Dictionary {propInCurrent.Name} should be initialized in current object");
-
-            if (changedDict == null && currentDict == null)
+            if (changedDict == null && originalDict == null)
                 yield break;
 
-            if (changedDict == null && currentDict != null)
+            if (changedDict == null && originalDict != null)
             {
-                foreach (var item in currentDict)
+                // clear original dict
+                foreach (var item in originalDict)
                 {
-                    var curpatch = $"{currentpatch}/{item.Key}";
-                    yield return new Change
-                    {
-                        op = Operations.remove,
-                        path = curpatch
-                    };
+                    var curpatch = $"{currentPatch}/{item.Key}";
+                    yield return Change.Remove(curpatch);
                 }
-                currentDict.Clear();
+                originalDict.Clear();
                 yield break;
             }
 
-            Guards.InternalErrorIfFalse(changedDict != null && currentDict != null, $"Unexpected case, both dictionaries should be not null in this place");
+            Guards.InternalErrorIfFalse(changedDict != null && originalDict != null, $"Unexpected case, both dictionaries should be not null in this place");
 
-            foreach (var curKey in currentDict.Keys)
+            foreach (var curKey in originalDict.Keys)
             {
-                var curpatch = $"{currentpatch}/{curKey}";
+                var curpatch = $"{currentPatch}/{curKey}";
                 if (!changedDict.TryGetValue(curKey, out var changedItem) || changedItem == null)
                 {
                     // no this item in new dict, remove it
-                    currentDict.Remove(curKey);
-                    yield return new Change
-                    {
-                        op = Operations.remove,
-                        path = curpatch
-                    };
+                    originalDict.Remove(curKey);
+                    yield return Change.Remove(curpatch);
                 }
             }
 
             // add new and update exsising
             foreach (var changedItem in changedDict)
             {
-                var curpatch = $"{currentpatch}/{changedItem.Key}";
+                var curpatch = $"{currentPatch}/{changedItem.Key}";
 
-                if (!currentDict.TryGetValue(changedItem.Key, out var curItem))
+                if (!originalDict.TryGetValue(changedItem.Key, out var origItem))
                 {
                     if (changedItem.Value != null)
                     {
                         // new item, add it
-                        if (changedItem.Value.GetType().IsSimpleTypeOrString())
-                        {
-                            curItem = changedItem.Value;
-                        }
-                        else
-                        {
-                            curItem = Activator.CreateInstance(changedItem.Value.GetType());
-                            Guards.InternalErrorIfNull(curItem);
-                            var skipped = DiffAndPatch(curItem, changedItem.Value, curpatch).ToArray();
-                        }
-                        currentDict.Add(changedItem.Key, curItem);
-                        yield return new Change
-                        {
-                            path = curpatch,
-                            op = Operations.add,
-                            value = curItem
-                        };
+                        var newItem = strategies.CreateFrom(changedItem.Value);
+                        Guards.InternalErrorIfNull(newItem);
+                        var skipped = DiffAndPatch(newItem, changedItem.Value, curpatch).ToArray();
+
+                        originalDict.Add(changedItem.Key, newItem);
+                        yield return Change.Add(curpatch, newItem);
                     }
                 }
                 else
@@ -215,87 +196,68 @@ namespace Def.JsonPatch
                     if (changedItem.Value == null)
                     {
                         // new item is null, remove old item
-                        if (curItem != null)
+                        if (origItem != null)
                         {
-                            currentDict.Remove(changedItem.Key);
-                            yield return new Change
-                            {
-                                path = curpatch,
-                                op = Operations.remove
-                            };
+                            originalDict.Remove(changedItem.Key);
+                            yield return Change.Remove(curpatch);
                         }
                     }
-                    else if (!changedItem.GetType().IsSimpleTypeOrString())
+                    else if (changedItem.GetType().IsSimpleTypeOrString())
                     {
-                        // both items exsist, value is complex
-                        foreach (var c in DiffAndPatch(curItem, changedItem.Value, curpatch))
-                            yield return c;
+                        // both items exsist and they are simple
+                        if (!strategies.AreEquals(origItem, changedItem.Value))
+                        {
+                            originalDict[changedItem.Key] = changedItem.Value;
+                            yield return Change.Replace(curpatch, changedItem.Value);
+                        };
                     }
                     else
                     {
-                        // both items exsist
-                        if (!strategies.AreEquals(curItem, changedItem.Value))
-                        {
-                            currentDict[changedItem.Key] = changedItem.Value;
-                            yield return new Change
-                            {
-                                op = Operations.replace,
-                                path = curpatch,
-                                value = changedItem.Value
-                            };
-                        }
+                        // both items exsist, value is complex
+                        foreach (var c in DiffAndPatch(origItem, changedItem.Value, curpatch))
+                            yield return c;
                     }
                 }
             }
-
         }
 
+
+
         private IEnumerable<Change> DiffAndPatchCollection(
-            object current,
-            PropertyInfo prop,
-            object changed,
-            string currentpatch)
+            ValueBinding original, ValueBinding changed, string currentPatch)
         {
-            var propInCurrent = strategies.GetSameProperty(current, prop);
-            var rawCurrentColl = strategies.GetValue(propInCurrent, current);         
-            var currentColl = rawCurrentColl as IList;
+            var currentColl = original.Value as IList;
             Guards.InternalErrorIfNull(currentColl,
-                $"Collection {propInCurrent.Name} should implement IList interface");
+                $"Collection {original.Property.Name} should implement IList interface");
 
-            var rawChangedColl = strategies.GetValue(prop, changed);
+            var changedColl = changed.Value as IEnumerable;
 
-            var changedColl = rawChangedColl as IEnumerable;
+            if (changedColl == null)
+                return RemoveAllCollectionItems(currentColl, currentPatch);
+            else
+                return DiffAndPatchCollection(currentColl, changedColl, currentPatch);
+        }
 
-            return DiffAndPatchCollection(currentColl, changedColl, currentpatch);
+        private IEnumerable<Change> RemoveAllCollectionItems(IList coll, string currentPatch)
+        {
+            for (int i = 0; i < coll.Count;)
+            {
+                coll.RemoveAt(i);
+                var curpatch = $"{currentPatch}/{i}";
+                yield return Change.Remove(curpatch);
+            }
+        }
+
+        record OldNewPair(object Changed)
+        {
+            internal object? Original { get; set; }
         }
 
         private IEnumerable<Change> DiffAndPatchCollection(
-            IList oldCollection,
-            IEnumerable? newCollection,
-            string currentpatch)
+            IList originalCollection,
+            IEnumerable newCollection,
+            string path)
         {
-            if (newCollection == null)
-            {
-                if (oldCollection != null)
-                {
-                    for (int i = 0; i < oldCollection.Count;)
-                    {
-                        var view = oldCollection[i];
-                        oldCollection.RemoveAt(i);
-                        var curpatch = $"{currentpatch}/{i}";
-                        yield return new Change
-                        {
-                            op = Operations.remove,
-                            path = curpatch
-                        };
-                    }
-                }
-                yield break;
-            }
-
-            if (oldCollection == null) // all collections should be created
-                Guards.InternalErrorIfNotImplemented($"collection used in json patch by path {currentpatch} should be initialized");
-
             var oldNewPairs = new List<OldNewPair>();
             foreach (var m in newCollection)
             {
@@ -303,73 +265,64 @@ namespace Def.JsonPatch
                 oldNewPairs.Add(new OldNewPair(m));
             }
 
-            // First iteration: bind old items to new items and remove missed from old items
-            for (int i = 0; i < oldCollection.Count;)
+            // First iteration: bind current items to new items and remove missed from current items
+            for (int i = 0; i < originalCollection.Count;)
             {
-                var view = oldCollection[i];
-                Guards.InternalErrorIfNull(view, $"unexpected null item in collection {oldCollection.GetType()}");
+                var view = originalCollection[i];
+                Guards.InternalErrorIfNull(view, $"Unexpected null item in position {i} in collection {originalCollection.GetType()}");
 
-                var old = oldNewPairs.FirstOrDefault(mv => mv.NewItem != null && strategies.AreSame(mv.NewItem, view));
+                var old = oldNewPairs.FirstOrDefault(mv => mv.Changed != null && strategies.AreSame(mv.Changed, view));
                 if (old != null)
                 {
-                    Guards.InternalErrorIfFalse(old.CurrentItem == null, $"Object in old collection for type {view.GetType()} exist more than once.");
-                    old.CurrentItem = view;
+                    Guards.InternalErrorIfFalse(old.Original == null, $"Object in old collection for type {view.GetType()} exist more than once.");
+                    old.Original = view;
                     ++i;
                 }
                 else
                 {
                     // current item is not exsist in changed collection - remove it
-                    oldCollection.RemoveAt(i);
-                    var curpatch = $"{currentpatch}/{i}";
-                    yield return new Change
-                    {
-                        op = Operations.remove,
-                        path = curpatch
-                    };
+                    originalCollection.RemoveAt(i);
+                    var curpatch = $"{path}/{i}";
+                    yield return Change.Remove(curpatch);
                 }
             }
 
-            Guards.InternalErrorIfFalse(oldCollection.Count <= oldNewPairs.Count, "currentColl have to contains only items already existing in changedColl");
+            Guards.InternalErrorIfFalse(originalCollection.Count <= oldNewPairs.Count, "currentColl have to contains only items already existing in changedColl");
 
             // add new items - items which are present only in newCollection
             for (int pos = 0; pos < oldNewPairs.Count; pos++)
             {
                 var pair = oldNewPairs[pos];
-                if (pair.CurrentItem == null)
+                if (pair.Original != null)
+                    continue;
+
+                // TODO: optimize 
+                Guards.InternalErrorIfFalse(originalCollection.Count >= pos,
+                    $"on this step of DiffAndPatchCollection we expect original colection has more elements than current element in new collection to allow correctly insert new element");
+
+                pair.Original = strategies.CreateFrom(pair.Changed);
+                originalCollection.Insert(pos, pair.Original);
+
+                var curpatch = $"{path}/{pos}";
+
+                // update current from changed without registry changes in result 
+                // this initialized object will be set into value
+                if (!pair.Original.GetType().IsSimpleTypeOrString())
                 {
-                    // TODO: optimize 
-                    Guards.InternalErrorIfFalse(oldCollection.Count >= pos,
-                        $"on this step of DiffAndPatchCollection we expect old colection has more elements than current element in new collection");
-
-                    pair.CurrentItem = strategies.CreateFrom(pair.NewItem);
-                    oldCollection.Insert(pos, pair.CurrentItem);
-
-                    var curpatch = $"{currentpatch}/{pos}";
-
-                    // update current from changed without registry changes in result (it is why new List<Change> is used)
-                    // this initialized view will be set into value
-                    if (!pair.CurrentItem.GetType().IsSimpleTypeOrString())
-                    {
-                        var sipped = DiffAndPatch(pair.CurrentItem, pair.NewItem, curpatch).ToArray();
-                    }
-
-                    yield return new Change
-                    {
-                        op = Operations.add,
-                        path = curpatch,
-                        value = pair.CurrentItem
-                    };
+                    var skipped = DiffAndPatch(pair.Original, pair.Changed, curpatch).ToArray();
                 }
+
+                yield return Change.Add(curpatch, pair.Original);
             }
 
-            Guards.InternalErrorIfFalse(oldCollection.Count == oldNewPairs.Count, "viewColl have to contains same items as in modelColl");
+            Guards.InternalErrorIfFalse(originalCollection.Count == oldNewPairs.Count, "viewColl have to contains same items as in modelColl");
 
             // optimization: detect what way (from top to bottom or bottom to top) will have less movings
             int weight = 0;
             for (int pos = 0; pos < oldNewPairs.Count; pos++)
             {
                 var pair = oldNewPairs[pos];
-                var viewPos = oldCollection.IndexOf(pair.CurrentItem);
+                var viewPos = originalCollection.IndexOf(pair.Original);
 
                 if (viewPos < pos)
                     --weight;
@@ -394,32 +347,29 @@ namespace Def.JsonPatch
             IEnumerable<Change> MoveAndUpdate(int pos)
             {
                 var pair = oldNewPairs[pos];
-                Guards.InternalErrorIfNull(pair.NewItem, $"All views should already created and bound with model");
-                Guards.InternalErrorIfNull(pair.CurrentItem, "All views should already created and bound with model");
+                Guards.InternalErrorIfNull(pair.Changed, $"All views should already created and bound with model");
+                Guards.InternalErrorIfNull(pair.Original, "All views should already created and bound with model");
 
-                var oldPos = oldCollection.IndexOf(pair.CurrentItem);
+                var oldPos = originalCollection.IndexOf(pair.Original);
 
-                var curpatch = $"{currentpatch}/{pos}";
+                var curpatch = $"{path}/{pos}";
                 if (oldPos != pos)
                 {
-                    var fromPath = $"{currentpatch}/{oldPos}";
-                    oldCollection.RemoveAt(oldPos);
-                    oldCollection.Insert(pos, pair.CurrentItem);
+                    var fromPath = $"{path}/{oldPos}";
+                    originalCollection.RemoveAt(oldPos);
+                    originalCollection.Insert(pos, pair.Original);
 
-                    yield return new Change
-                    {
-                        op = Operations.move,
-                        path = curpatch,
-                        from = fromPath
-                    };
+                    yield return Change.Move(curpatch, fromPath);
                 }
 
-                if (!pair.CurrentItem.GetType().IsSimpleTypeOrString())
+                if (!pair.Original.GetType().IsSimpleTypeOrString())
                 {
-                    foreach (var c in DiffAndPatch(pair.CurrentItem, pair.NewItem, curpatch))
+                    foreach (var c in DiffAndPatch(pair.Original, pair.Changed, curpatch))
                         yield return c;
                 }
             }
         }
+
+
     }
 }
