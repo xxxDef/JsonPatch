@@ -62,13 +62,15 @@ namespace Def.JsonPatch
             if (current == null)
             {
                 // in this case we fully replace all content of object - use https://json8.github.io/patch/demos/apply/ to test
-                yield return new Change
+                return new Change[]
                 {
-                    op = Operations.replace,
-                    path = "",
-                    value = changed
+                    new Change
+                    {
+                        op = Operations.replace,
+                        path = "",
+                        value = changed
+                    }
                 };
-                yield break;
             }
             return DiffAndPatch(current, changed, "");
         }
