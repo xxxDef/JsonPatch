@@ -10,17 +10,6 @@ namespace Def.JsonPatch
         static readonly ConcurrentDictionary<Type, PropertyInfo[]> propertyInfoCache = new ConcurrentDictionary<Type, PropertyInfo[]>();
         static readonly ConcurrentDictionary<Type, FieldInfo[]> fieldInfoCache = new ConcurrentDictionary<Type, FieldInfo[]>();
 
-        public static bool HasLessThanOrEqual(this Type t)
-        {
-            var op = t.GetUnderlineNonNullableType().GetMethod("op_LessThanOrEqual");
-            return op != null && op.IsSpecialName;
-        }
-        public static bool HasGreaterThanOrEqual(this Type t)
-        {
-            var op = t.GetUnderlineNonNullableType().GetMethod("op_GreaterThanOrEqual");
-            return op != null && op.IsSpecialName;
-        }
-
         public static Type GetUnderlineNonNullableType(this Type t)
         {
             return Nullable.GetUnderlyingType(t) ?? t;
@@ -166,10 +155,5 @@ namespace Def.JsonPatch
             return element.GetCustomAttributesEx().OfType<TAttibute>().Cast<TAttibute>();
         }
 
-        public static PropertyInfo GetPropertyInfo<T, P>(Expression<Func<T, P>> propertyExpr)
-        {
-            var expr = propertyExpr.Body is UnaryExpression uexpr ? (MemberExpression)uexpr.Operand : (MemberExpression)propertyExpr.Body;
-            return (PropertyInfo)expr.Member;
-        }
     }
 }
