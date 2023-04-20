@@ -1,18 +1,9 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Globalization;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Globalization;
 
 namespace Def.JsonPatch
 {
     public static class ConvertEx
     {
-        public static T? ChangeType<T>(object? value) where T : class
-        {
-            return (T?)ChangeType(value, typeof(T));
-        }
         public static object? ChangeType(object? value, Type targetType)
         {
             Guards.InternalErrorIfNull(targetType);

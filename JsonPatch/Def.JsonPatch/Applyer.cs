@@ -25,7 +25,7 @@ namespace Def.JsonPatch
                 {
                     throw new JsonPatchArgumentException(change, ex);
                 }
-                catch (OverflowException ex) // it is possible - see case SVC-3686
+                catch (OverflowException ex) 
                 {
                     throw new JsonPatchArgumentException(change, ex);
                 }
@@ -42,7 +42,13 @@ namespace Def.JsonPatch
             return changedProperties;
         }
 
-        #region ApplyChanges
+        static void Move(IList list, int positionFrom, int positionTo)
+        {
+            var modelToMove = list[positionFrom];
+            list.RemoveAt(positionFrom);
+            list.Insert(positionTo, modelToMove);
+        }
+
         static PropertyInfo ApplyChange(object view, Change change)
         {
             Guards.ArgumentNotNullOrEmpty(change.path, "path", "Path is empty and doesn't point to applicable entity");
@@ -97,7 +103,7 @@ namespace Def.JsonPatch
                     Guards.ArgumentPassCondition(indexFrom < coll.Count, $"Index in from {fromPath} out of range");
                     Guards.ArgumentPassCondition(indexFrom >= 0, $"Index in from {fromPath} out of range");
 
-                    coll.Move(indexFrom, index);
+                    Move(coll, indexFrom, index);
                 }
                 else
                 {
@@ -163,8 +169,5 @@ namespace Def.JsonPatch
                 return res;
             }
         }
-
-        #endregion
-
     }
 }

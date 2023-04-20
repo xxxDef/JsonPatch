@@ -6,9 +6,8 @@ namespace Def.JsonPatch
 {
     public static class JsonPathEx
     {
-        public static string[] Split(string path)
+        public static IEnumerable<string> Split(string path)
         {
-            var strings = new List<string>();
             var sb = new StringBuilder(path.Length);
 
             for (var i = 0; i < path.Length; i++)
@@ -17,7 +16,7 @@ namespace Def.JsonPatch
                 {
                     if (sb.Length > 0)
                     {
-                        strings.Add(sb.ToString());
+                        yield return sb.ToString();
                         sb.Length = 0;
                     }
                 }
@@ -47,10 +46,8 @@ namespace Def.JsonPatch
 
             if (sb.Length > 0)
             {
-                strings.Add(sb.ToString());
+                yield return sb.ToString();
             }
-
-            return strings.ToArray();
         }
 
         public static bool TryParseIndex(string p, out int index)
@@ -68,7 +65,7 @@ namespace Def.JsonPatch
 
         public static (object curObj, string curPath, PropertyInfo? parentProp) TravelInto(object curObj, string path)
         {
-            var pathItems = Split(path);
+            var pathItems = Split(path).ToArray();
             Guards.ArgumentPassCondition(pathItems.Length > 0, $"Invalid path {path}");
 
             PropertyInfo? parentProp = null;
