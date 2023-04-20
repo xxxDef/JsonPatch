@@ -62,24 +62,20 @@ namespace Def.JsonPatch
             if (current == null)
             {
                 // in this case we fully replace all content of object - use https://json8.github.io/patch/demos/apply/ to test
-                return new Change[]
+                yield return new Change
                 {
-                    new Change
-                    {
-                        op = Operations.replace,
-                        path = "",
-                        value = changed
-                    }
+                    op = Operations.replace,
+                    path = "",
+                    value = changed
                 };
+                yield break;
             }
-            var changes = new List<Change>();
-            DiffAndPatch(current, changed, "", changes);
-            return changes;
+            return DiffAndPatch(current, changed, "");
         }
 
         #region DiffAndPatch
 
-        private void DiffAndPatch(object current, object changed, string parentPath, ICollection<Change> changes)
+        private IEnumerable<Change> DiffAndPatch(object current, object changed, string parentPath)
         {
             var props = changed.GetType().GetProperties();
             foreach (var prop in props)
@@ -91,26 +87,28 @@ namespace Def.JsonPatch
 
                 if (prop.IsSimpleTypeOrString())
                 {
-                    DiffAndPatchValue(current, prop, changed, curPath, changes);
+                    foreach (var c in DiffAndPatchValue(current, prop, changed, curPath))
+                        yield return c;
                 }
                 else if (prop.IsAssociativeDictionary())
                 {
-                    DiffAndPatchDictionary(current, prop, changed, curPath, changes);
+                    foreach (var c in DiffAndPatchDictionary(current, prop, changed, curPath))
+                        yield return c;
                 }
                 else if (prop.IsEnumerable())
                 {
-                    DiffAndPatchCollection(current, prop, changed, curPath, changes);
+                    foreach (var c in DiffAndPatchCollection(current, prop, changed, curPath))
+                        yield return c;
                 }
                 else
                 {
-                    DiffAndPatchContainer(current, prop, changed, curPath, changes);
+                    foreach (var c in DiffAndPatchContainer(current, prop, changed, curPath))
+                        yield return c;
                 }
             }
         }
 
-
-
-        private void DiffAndPatchValue(object current, PropertyInfo prop, object changed, string childFieldName, ICollection<Change> result)
+        private IEnumerable<Change> DiffAndPatchValue(object current, PropertyInfo prop, object changed, string childFieldName)
         {
             var newValue = prop.GetValue(changed);
             var currentProp = GetSamePropertyStrategy(current, prop);
@@ -120,19 +118,19 @@ namespace Def.JsonPatch
             {
                 if (SetValueStrategy(currentProp, current, newValue))
                 {
-                    result.Add(new Change
+                    yield return new Change
                     {
                         path = childFieldName,
                         op = Operations.replace,
                         value = newValue
-                    });
+                    };
                 }
             }
         }
 
 
 
-        private void DiffAndPatchContainer(object current, PropertyInfo prop, object changed, string currentpatch, ICollection<Change> result)
+        private IEnumerable<Change> DiffAndPatchContainer(object current, PropertyInfo prop, object changed, string currentpatch)
         {
             var currentProp = GetSamePropertyStrategy(current, prop);
             var currentChild = currentProp.GetValue(current);
@@ -142,12 +140,11 @@ namespace Def.JsonPatch
             {
                 prop.SetValue(current, null);
                 // remove old view
-                var removeChange = new Change
+                yield return new Change
                 {
                     op = Operations.remove,
                     path = currentpatch
                 };
-                result.Add(removeChange);
             }
             else if (currentChild == null && changedChild != null)
             {
@@ -155,19 +152,20 @@ namespace Def.JsonPatch
                 currentChild = Activator.CreateInstance(prop.PropertyType);
                 Guards.InternalErrorIfNull(currentChild, $"failed to create new item of type {prop.PropertyType}");
                 prop.SetValue(current, currentChild);
-                DiffAndPatch(currentChild, changedChild, currentpatch, new List<Change>());
+                var skipped = DiffAndPatch(currentChild, changedChild, currentpatch).ToArray();
 
-                var addChange = new Change
+                yield return new Change
                 {
                     op = Operations.add,
                     path = currentpatch,
                     value = currentChild
                 };
-                result.Add(addChange);
             }
             else if (currentChild != null && changedChild != null)
             {
-                DiffAndPatch(currentChild, changedChild, currentpatch, result);
+                foreach (var c in DiffAndPatch(currentChild, changedChild, currentpatch))
+                    yield return c;
+
             }
             else
             {
@@ -186,8 +184,8 @@ namespace Def.JsonPatch
             internal object? CurrentItem { get; set; }
         }
 
-        private void DiffAndPatchDictionary(
-            object current, PropertyInfo prop, object changed, string currentpatch, ICollection<Change> changes)
+        private IEnumerable<Change> DiffAndPatchDictionary(
+            object current, PropertyInfo prop, object changed, string currentpatch)
         {
             var propInCurrent = GetSamePropertyStrategy(current, prop);
 
@@ -201,22 +199,21 @@ namespace Def.JsonPatch
                $"Dictionary {propInCurrent.Name} should be initialized in current object");
 
             if (changedDict == null && currentDict == null)
-                return;
+                yield break;
 
             if (changedDict == null && currentDict != null)
             {
                 foreach (var item in currentDict)
                 {
                     var curpatch = $"{currentpatch}/{item.Key}";
-                    var removeChange = new Change
+                    yield return new Change
                     {
                         op = Operations.remove,
                         path = curpatch
                     };
-                    changes.Add(removeChange);
                 }
                 currentDict.Clear();
-                return;
+                yield break;
             }
 
             Guards.InternalErrorIfFalse(changedDict != null && currentDict != null, $"Unexpected case, both dictionaries should be not null in this place");
@@ -228,12 +225,11 @@ namespace Def.JsonPatch
                 {
                     // no this item in new dict, remove it
                     currentDict.Remove(curKey);
-                    var removeChange = new Change
+                    yield return new Change
                     {
                         op = Operations.remove,
                         path = curpatch
                     };
-                    changes.Add(removeChange);
                 }
             }
 
@@ -255,10 +251,15 @@ namespace Def.JsonPatch
                         {
                             curItem = Activator.CreateInstance(changedItem.Value.GetType());
                             Guards.InternalErrorIfNull(curItem);
-                            DiffAndPatch(curItem, changedItem.Value, curpatch, new List<Change>());
+                            var skipped = DiffAndPatch(curItem, changedItem.Value, curpatch).ToArray();
                         }
                         currentDict.Add(changedItem.Key, curItem);
-                        changes.AddAdd(curpatch, curItem);
+                        yield return new Change
+                        {
+                            path = curpatch,
+                            op = Operations.add,
+                            value = curItem
+                        };
                     }
                 }
                 else
@@ -269,13 +270,18 @@ namespace Def.JsonPatch
                         if (curItem != null)
                         {
                             currentDict.Remove(changedItem.Key);
-                            changes.AddRemove(curpatch);
+                            yield return new Change
+                            {
+                                path = curpatch,
+                                op = Operations.remove
+                            };
                         }
                     }
                     else if (!changedItem.GetType().IsSimpleTypeOrString())
                     {
                         // both items exsist, value is complex
-                        DiffAndPatch(curItem, changedItem.Value, curpatch, changes);
+                        foreach (var c in DiffAndPatch(curItem, changedItem.Value, curpatch))
+                            yield return c;
                     }
                     else
                     {
@@ -283,7 +289,12 @@ namespace Def.JsonPatch
                         if (!AreEqualsStrategy(curItem, changedItem.Value))
                         {
                             currentDict[changedItem.Key] = changedItem.Value;
-                            changes.AddReplace(curpatch, changedItem.Value);
+                            yield return new Change
+                            {
+                                op = Operations.replace,
+                                path = curpatch,
+                                value = changedItem.Value
+                            };
                         }
                     }
                 }
@@ -291,12 +302,11 @@ namespace Def.JsonPatch
 
         }
 
-        private void DiffAndPatchCollection(
+        private IEnumerable<Change> DiffAndPatchCollection(
             object current,
             PropertyInfo prop,
             object changed,
-            string currentpatch,
-            ICollection<Change> result)
+            string currentpatch)
         {
             var propInCurrent = GetSamePropertyStrategy(current, prop);
             var rawCurrentColl = propInCurrent.GetValue(current);
@@ -313,31 +323,36 @@ namespace Def.JsonPatch
             {
                 var changedColl = rawChangedColl as IEnumerable;
 
-                DiffAndPatchCollection(currentColl, changedColl, currentpatch, result,
+                foreach (var c in DiffAndPatchCollection(currentColl, changedColl, currentpatch,
                     x => x?.ToString(),
-                    x => x);
+                    x => x))
+                {
+                    yield return c;
+                }
 
             }
             else
             {
                 var changedColl = rawChangedColl as IEnumerable;
-                DiffAndPatchCollection(currentColl, changedColl, currentpatch, result,
+                foreach (var c in DiffAndPatchCollection(currentColl, changedColl, currentpatch,
                     GetUniqueIdStrategy,
                     (x) =>
                     {
                         var newObj = CreateStrategy(x.GetType());
                         SetUniqueIdStrategy(newObj, x);
                         return newObj;
-                    });
+                    }))
+                {
+                    yield return c;
+                }
             }
         }
 
 
-        private void DiffAndPatchCollection(
+        private IEnumerable<Change> DiffAndPatchCollection(
             IList oldCollection,
             IEnumerable? newCollection,
             string currentpatch,
-            ICollection<Change> result,
             Func<object, string?> getUniquieId,
             Func<object, object> createFrom)
         {
@@ -350,15 +365,14 @@ namespace Def.JsonPatch
                         var view = oldCollection[i];
                         oldCollection.RemoveAt(i);
                         var curpatch = $"{currentpatch}/{i}";
-                        var removeChange = new Change
+                        yield return new Change
                         {
                             op = Operations.remove,
                             path = curpatch
                         };
-                        result.Add(removeChange);
                     }
                 }
-                return;
+                yield break;
             }
 
             if (oldCollection == null) // all collections should be created
@@ -390,12 +404,11 @@ namespace Def.JsonPatch
                     // current item is not exsist in changed collection - remove it
                     oldCollection.RemoveAt(i);
                     var curpatch = $"{currentpatch}/{i}";
-                    var removeChange = new Change
+                    yield return new Change
                     {
                         op = Operations.remove,
                         path = curpatch
                     };
-                    result.Add(removeChange);
                 }
             }
 
@@ -419,15 +432,16 @@ namespace Def.JsonPatch
                     // update current from changed without registry changes in result (it is why new List<Change> is used)
                     // this initialized view will be set into value
                     if (!pair.CurrentItem.GetType().IsSimpleTypeOrString())
-                        DiffAndPatch(pair.CurrentItem, pair.Newitem, curpatch, new List<Change>());
+                    {
+                        var sipped = DiffAndPatch(pair.CurrentItem, pair.Newitem, curpatch).ToArray();
+                    }
 
-                    var addChange = new Change
+                    yield return new Change
                     {
                         op = Operations.add,
                         path = curpatch,
                         value = pair.CurrentItem
                     };
-                    result.Add(addChange);
                 }
             }
 
@@ -449,16 +463,18 @@ namespace Def.JsonPatch
             if (weight <= 0)
             {
                 for (int p = 0; p < oldNewPairs.Count; p++)
-                    MoveAndUpdate(p);
+                    foreach (var c in MoveAndUpdate(p))
+                        yield return c;
             }
             else
             {
                 for (int p = oldNewPairs.Count; p > 0; p--)
-                    MoveAndUpdate(p - 1);
+                    foreach (var c in MoveAndUpdate(p-1))
+                        yield return c;
             }
             // move and update
 
-            void MoveAndUpdate(int pos)
+            IEnumerable<Change> MoveAndUpdate(int pos)
             {
                 var pair = oldNewPairs[pos];
                 Guards.InternalErrorIfNull(pair.Newitem, $"All views should already created and bound with model");
@@ -473,17 +489,19 @@ namespace Def.JsonPatch
                     oldCollection.RemoveAt(oldPos);
                     oldCollection.Insert(pos, pair.CurrentItem);
 
-                    var moveChange = new Change
+                    yield return  new Change
                     {
                         op = Operations.move,
                         path = curpatch,
                         from = fromPath
                     };
-                    result.Add(moveChange);
                 }
 
                 if (!pair.CurrentItem.GetType().IsSimpleTypeOrString())
-                    DiffAndPatch(pair.CurrentItem, pair.Newitem, curpatch, result);
+                {
+                    foreach (var c in DiffAndPatch(pair.CurrentItem, pair.Newitem, curpatch))
+                        yield return c;
+                }
             }
         }
 

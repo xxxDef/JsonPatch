@@ -41,7 +41,7 @@ namespace JsonPatch.Tests
                 Name = "Name",
             };
 
-            differ.DiffAndPatch(v1, new { Name = "Name2" });
+            var changes = differ.DiffAndPatch(v1, new { Name = "Name2" }).ToArray();
 
             Assert.AreEqual("Name2", v1.Name);
         }
@@ -56,7 +56,7 @@ namespace JsonPatch.Tests
             };
 
             var ex = Assert.Throws<ArgumentException>(() => 
-                differ.DiffAndPatch(v1, new { Name = "Name2" }));
+                differ.DiffAndPatch(v1, new { Name = "Name2" }).ToArray());
 
             Assert.AreEqual("Property set method not found.", ex.Message);
         }
