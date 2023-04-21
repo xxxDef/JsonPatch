@@ -130,7 +130,7 @@ namespace Def.JsonPatch
             return res;
         }
 
-        public static PropertyInfo GetPropertyEx(this Type type, string name, bool ignoreCase)
+        public static PropertyInfo? GetPropertyEx(this Type type, string name, bool ignoreCase)
         {
             var prop = type.GetPropertiesEx().FirstOrDefault(p => string.Compare(p.Name, name, ignoreCase) == 0);
             return prop;
